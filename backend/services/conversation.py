@@ -90,6 +90,7 @@ async def chat_llm(
 # Function to generate a session title using the LLM
 async def generate_session_title(user_message: str) -> str:
     prompt = f"Generate a concise, relevant title (max 8 words) for a legal chat session based on this user message: '{user_message}'. Return only the title, no extra text and be unique with the titles."
+    
     try:
         chain = llm | StrOutputParser()
         result = await chain.ainvoke(prompt)
@@ -97,6 +98,8 @@ async def generate_session_title(user_message: str) -> str:
         title = result.strip().replace("\n", " ")
         if len(title) > 60:
             title = title[:60] + "..."
+
+        title = title.replace("  ", " ").strip()
         return title or "Untitled Session"
     except Exception as e:
         logger.error(f"Error generating session title: {e}\n{traceback.format_exc()}")

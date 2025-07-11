@@ -1,141 +1,149 @@
-import fitz  # PyMuPDF for better PDF handling
 from typing import List, Dict, Any
-import hashlib
-from loguru import logger
+import re
+from tiktoken import encoding_for_model
 
 
-def generate_file_hash(file_path: str) -> str:
-    """Generate a unique hash for the file to avoid duplicates."""
-    hasher = hashlib.md5()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+encoding = encoding_for_model("gpt-4o-mini")
 
+def count_tokens(text: str) -> int:
+    """Count tokens in text"""
+    return len(encoding.encode(text))
 
-def extract_text_with_page_numbers(pdf_path: str) -> List[Dict[str, Any]]:
-    """
-    Extract text from PDF with page numbers and section detection.
-    Returns list of dictionaries with text, page_number, and section info.
-    """
-    try:
-        doc = fitz.open(pdf_path)
-        pages_data = []
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            text = page.get_text()
-            text = text.strip()
-            if not text:
-                continue
-            section_markers = [
-                "SECTION",
-                "CHAPTER",
-                "ARTICLE",
-                "PART",
-                "TITLE",
-                "§",
-                "Article",
-                "Chapter",
-                "Section",
-                "Part",
-            ]
-            is_section_start = any(marker in text[:200] for marker in section_markers)
-            pages_data.append(
-                {
-                    "text": text,
-                    "page_number": page_num + 1,
-                    "is_section_start": is_section_start,
-                    "char_count": len(text),
-                }
-            )
-        doc.close()
-        return pages_data
-    except Exception as e:
-        logger.error(f"Error extracting text from PDF: {e}")
-        return []
-
-
-def create_intelligent_chunks(
-    pages_data: List[Dict[str, Any]], chunk_size: int = 1500, chunk_overlap: int = 200
-) -> List[Dict[str, Any]]:
-    """
-    Create intelligent chunks based on legal document structure.
-    Prioritizes section boundaries and maintains context.
-    """
-    chunks = []
-    current_chunk = ""
-    current_pages = []
-    current_section = ""
-    for page_data in pages_data:
-        text = page_data["text"]
-        page_num = page_data["page_number"]
-        lines = text.split("\n")
+class LegalDocumentChunker:
+    """Enhanced chunker for legal documents with structure preservation"""
+    
+    def __init__(self, max_tokens: int = 512, overlap_percentage: float = 0.15):
+        self.max_tokens = max_tokens
+        self.overlap_percentage = overlap_percentage
+        self.legal_section_patterns = [
+            r'^\s*(ARTICLE|Article|SECTION|Section|CHAPTER|Chapter)\s+([IVX]+|\d+)',
+            r'^\s*(\d+)\.\s*([A-Z][^.]*\.?)',
+            r'^\s*([A-Z][A-Z\s]{3,})\s*$',  # ALL CAPS headers
+            r'^\s*(WHEREAS|THEREFORE|NOW THEREFORE)',
+            r'^\s*(Definitions?|Obligations?|Representations?|Warranties?|Termination|Liability|Confidentiality)',
+            r'^\s*\([a-z]\)\s*',  # (a), (b), (c) subsections
+            r'^\s*\([0-9]+\)\s*',  # (1), (2), (3) subsections
+        ]
+    
+    def is_section_header(self, line: str) -> bool:
+        """Check if line is a section header"""
+        line = line.strip()
+        if len(line) < 3:
+            return False
+        
+        return any(re.match(pattern, line, re.IGNORECASE) for pattern in self.legal_section_patterns)
+    
+    def extract_hierarchical_sections(self, text: str) -> List[Dict[str, Any]]:
+        """Extract sections maintaining hierarchical structure"""
+        lines = text.split('\n')
+        sections = []
+        current_section = None
+        current_content = []
+        section_hierarchy = []
+        
         for i, line in enumerate(lines):
             line = line.strip()
             if not line:
                 continue
-            if page_data["is_section_start"] and i < 3:
-                section_markers = [
-                    "SECTION",
-                    "CHAPTER",
-                    "ARTICLE",
-                    "PART",
-                    "TITLE",
-                    "§",
-                ]
-                if any(marker in line.upper() for marker in section_markers):
-                    if current_chunk.strip():
-                        chunks.append(
-                            {
-                                "text": current_chunk.strip(),
-                                "page_numbers": current_pages.copy(),
-                                "section": current_section,
-                                "chunk_size": len(current_chunk),
-                            }
-                        )
-                    current_chunk = ""
-                    current_pages = []
-                    current_section = line
-            current_chunk += line + " "
-            if page_num not in current_pages:
-                current_pages.append(page_num)
-            if len(current_chunk) > chunk_size:
-                sentences = current_chunk.split(". ")
-                if len(sentences) > 1:
-                    break_point = ". ".join(sentences[:-1]) + "."
-                    remainder = sentences[-1]
-                    chunks.append(
-                        {
-                            "text": break_point,
-                            "page_numbers": current_pages.copy(),
-                            "section": current_section,
-                            "chunk_size": len(break_point),
-                        }
-                    )
-                    current_chunk = remainder + " "
-                    current_pages = [current_pages[-1]] if current_pages else []
+            
+            if self.is_section_header(line):
+                # Save previous section if exists
+                if current_section and current_content:
+                    content = ' '.join(current_content).strip()
+                    if content:
+                        sections.append({
+                            'section_title': current_section,
+                            'content': content,
+                            'hierarchy': section_hierarchy.copy(),
+                            'line_start': i - len(current_content),
+                            'line_end': i - 1,
+                            'token_count': count_tokens(content)
+                        })
+                
+                # Start new section
+                current_section = line
+                current_content = []
+                
+                # Determine hierarchy level
+                if re.match(r'^\s*(ARTICLE|SECTION|CHAPTER)', line, re.IGNORECASE):
+                    section_hierarchy = [line]
+                elif re.match(r'^\s*\d+\.', line):
+                    section_hierarchy = section_hierarchy[:1] + [line]
+                elif re.match(r'^\s*\([a-z]\)', line):
+                    section_hierarchy = section_hierarchy[:2] + [line]
                 else:
-                    words = current_chunk.split()
-                    split_point = len(words) // 2
-                    first_half = " ".join(words[:split_point])
-                    second_half = " ".join(words[split_point:])
-                    chunks.append(
-                        {
-                            "text": first_half,
-                            "page_numbers": current_pages.copy(),
-                            "section": current_section,
-                            "chunk_size": len(first_half),
-                        }
-                    )
-                    current_chunk = second_half + " "
-                    current_pages = [current_pages[-1]] if current_pages else []
-    if current_chunk.strip():
-        chunks.append(
-            {
-                "text": current_chunk.strip(),
-                "page_numbers": current_pages,
-                "section": current_section,
-                "chunk_size": len(current_chunk),
-            }
-        )
-    return chunks
+                    section_hierarchy.append(line)
+            else:
+                current_content.append(line)
+        
+        # Add final section
+        if current_section and current_content:
+            content = ' '.join(current_content).strip()
+            if content:
+                sections.append({
+                    'section_title': current_section,
+                    'content': content,
+                    'hierarchy': section_hierarchy.copy(),
+                    'line_start': len(lines) - len(current_content),
+                    'line_end': len(lines) - 1,
+                    'token_count': count_tokens(content)
+                })
+        
+        return sections
+    
+    def create_overlapping_chunks(self, sections: List[Dict]) -> List[Dict]:
+        """Create overlapping chunks with context preservation"""
+        chunks = []
+        
+        for i, section in enumerate(sections):
+            content = section['content']
+            token_count = section['token_count']
+            
+            if token_count <= self.max_tokens:
+                # Section fits in one chunk
+                chunk = section.copy()
+                
+                # Add overlap from previous section if exists
+                if i > 0 and sections[i-1]['token_count'] > 0:
+                    prev_content = sections[i-1]['content']
+                    overlap_tokens = int(count_tokens(prev_content) * self.overlap_percentage)
+                    
+                    if overlap_tokens > 0:
+                        prev_words = prev_content.split()
+                        overlap_words = prev_words[-overlap_tokens:] if len(prev_words) > overlap_tokens else prev_words
+                        overlap_text = ' '.join(overlap_words)
+                        
+                        chunk['content'] = f"{overlap_text} {content}"
+                        chunk['has_overlap'] = True
+                        chunk['overlap_source'] = sections[i-1]['section_title']
+                
+                chunks.append(chunk)
+            else:
+                # Split large section into multiple chunks
+                words = content.split()
+                chunk_size = self.max_tokens - 50  # Leave room for overlap
+                
+                for j in range(0, len(words), chunk_size):
+                    chunk_words = words[j:j + chunk_size]
+                    chunk_content = ' '.join(chunk_words)
+                    
+                    # Add overlap from previous chunk
+                    if j > 0:
+                        overlap_size = int(chunk_size * self.overlap_percentage)
+                        overlap_words = words[max(0, j - overlap_size):j]
+                        overlap_text = ' '.join(overlap_words)
+                        chunk_content = f"{overlap_text} {chunk_content}"
+                    
+                    chunk = {
+                        'section_title': f"{section['section_title']} (Part {j//chunk_size + 1})",
+                        'content': chunk_content,
+                        'hierarchy': section['hierarchy'],
+                        'is_split': True,
+                        'part_number': j//chunk_size + 1,
+                        'total_parts': (len(words) + chunk_size - 1) // chunk_size,
+                        'token_count': count_tokens(chunk_content),
+                        'has_overlap': j > 0
+                    }
+                    chunks.append(chunk)
+        
+        return chunks
