@@ -2,9 +2,6 @@ from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import (
     ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-    AIMessagePromptTemplate,
 )
 from loguru import logger
 import traceback
@@ -20,7 +17,6 @@ try:
     if not OPENAI_API_KEY:
         raise ValueError("OPENAI_API_KEY is not set in environment variables.")
 
-    # Initialize a standard client without JSON mode by default
     llm = ChatOpenAI(
         api_key=OPENAI_API_KEY,
         model="gpt-4o-mini",
@@ -57,10 +53,10 @@ async def chat_llm(
 
         conversation_context = "\nPrevious Conversation:\n"
         for msg in conversation_history:
-            if "user" in msg:
-                conversation_context += f"User: {msg['user']}\n"
-            if "ai" in msg:
-                conversation_context += f"Assistant: {msg['ai']}\n"
+            if msg.get("role") == "user":
+                conversation_context += f"User: {msg['message']}\n"
+            if msg.get("role") == "ai":
+                conversation_context += f"Assistant: {msg['message']}\n"
 
     human_prompt = """
         This is the conversation history between the user and the AI.
@@ -93,11 +89,11 @@ async def chat_llm(
 
 # Function to generate a session title using the LLM
 async def generate_session_title(user_message: str) -> str:
-    prompt = f"Generate a concise, relevant title (max 8 words) for a legal chat session based on this user message: '{user_message}'. Return only the title, no extra text."
+    prompt = f"Generate a concise, relevant title (max 8 words) for a legal chat session based on this user message: '{user_message}'. Return only the title, no extra text and be unique with the titles."
     try:
         chain = llm | StrOutputParser()
         result = await chain.ainvoke(prompt)
-        # Clean up the result
+   
         title = result.strip().replace("\n", " ")
         if len(title) > 60:
             title = title[:60] + "..."
@@ -108,7 +104,6 @@ async def generate_session_title(user_message: str) -> str:
 
 
 if __name__ == "__main__":
-    # Example usage
     import asyncio
 
     async def main():

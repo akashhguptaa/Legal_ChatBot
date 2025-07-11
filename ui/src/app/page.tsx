@@ -28,6 +28,7 @@ export default function LawroomAI() {
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const isStreamingRef = useRef(false);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -38,38 +39,54 @@ export default function LawroomAI() {
   }, [messages, streamingMessage]);
 
   useEffect(() => {
-    fetchSessions(); // Only on mount
-  }, []);
-
-  // Open WebSocket once per session or on mount
-  useEffect(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      connectWebSocket();
-    }
+    fetchSessions();
+    connectWebSocket();
+    
     // Clean up on unmount
     return () => {
-      wsRef.current?.close();
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
     };
-  }, [currentSessionId]);
+  }, []);
 
   const connectWebSocket = () => {
+    // Don't create new connection if one already exists and is open
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       return;
     }
+
     wsRef.current = new WebSocket("ws://localhost:8000/ws/chat");
-    wsRef.current.onopen = () => {};
+    
+    wsRef.current.onopen = () => {
+      console.log("WebSocket connected");
+    };
+    
     wsRef.current.onmessage = (event) => {
       try {
+        // Try to parse as JSON first (for session_id messages)
         const data = JSON.parse(event.data);
         if (data.session_id) {
           setCurrentSessionId(data.session_id);
+          // Refresh sessions when new session is created
+          fetchSessions();
         }
       } catch {
-        // This is streaming text
-        setStreamingMessage((prev) => prev + event.data);
+        // This is streaming text data
+        if (isStreamingRef.current) {
+          setStreamingMessage((prev) => prev + event.data);
+        }
       }
     };
-    wsRef.current.onclose = () => {};
+    
+    wsRef.current.onclose = (event) => {
+      console.log("WebSocket closed", event.code, event.reason);
+      // Only try to reconnect if it wasn't a normal closure
+      if (event.code !== 1000) {
+        setTimeout(connectWebSocket, 1000);
+      }
+    };
+    
     wsRef.current.onerror = (error) => {
       console.error("WebSocket error:", error);
     };
@@ -101,10 +118,13 @@ export default function LawroomAI() {
 
   const sendMessage = async () => {
     if (!inputValue.trim() || isLoading) return;
+    
     const userMessage = inputValue.trim();
     setInputValue("");
     setIsLoading(true);
     setStreamingMessage("");
+    isStreamingRef.current = true;
+
     // Add user message to UI immediately
     const newUserMessage: Message = {
       role: "user",
@@ -112,6 +132,14 @@ export default function LawroomAI() {
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, newUserMessage]);
+
+    // Ensure WebSocket is connected
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      connectWebSocket();
+      // Wait a bit for connection to establish
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
         JSON.stringify({
@@ -119,15 +147,20 @@ export default function LawroomAI() {
           session_id: currentSessionId,
         })
       );
+    } else {
+      console.error("WebSocket not connected");
+      setIsLoading(false);
+      isStreamingRef.current = false;
     }
   };
 
-  // Listen for end of streaming and finalize AI message
+  // Handle end of streaming - use a different approach
   useEffect(() => {
-    if (!isLoading) return;
-    // If streamingMessage is being updated, wait for a pause (e.g., 500ms of no new data)
+    if (!isLoading || !streamingMessage) return;
+
+    // Set a timeout to finalize the message after no new chunks for 1 second
     const timeout = setTimeout(() => {
-      if (streamingMessage) {
+      if (streamingMessage && isStreamingRef.current) {
         const newAiMessage: Message = {
           role: "ai",
           message: streamingMessage,
@@ -136,8 +169,10 @@ export default function LawroomAI() {
         setMessages((prev) => [...prev, newAiMessage]);
         setStreamingMessage("");
         setIsLoading(false);
+        isStreamingRef.current = false;
       }
-    }, 500);
+    }, 1000); // Increased timeout to 1 second
+
     return () => clearTimeout(timeout);
   }, [streamingMessage, isLoading]);
 
@@ -145,12 +180,15 @@ export default function LawroomAI() {
     setCurrentSessionId(null);
     setMessages([]);
     setStreamingMessage("");
-    connectWebSocket();
+    setIsLoading(false);
+    isStreamingRef.current = false;
   };
 
-  // Only call fetchChatHistory when a session is selected
   const selectSession = (sessionId: string) => {
     setCurrentSessionId(sessionId);
+    setStreamingMessage("");
+    setIsLoading(false);
+    isStreamingRef.current = false;
     fetchChatHistory(sessionId);
   };
 
