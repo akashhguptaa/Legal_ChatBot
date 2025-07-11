@@ -27,9 +27,9 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     {isEmptyChat ? (
       <div className="flex flex-col items-center justify-center h-full px-4">
         <div className="text-center max-w-2xl">
-        <h1 className="text-4xl font-bold mb-4 bg-gradient-to-r from-teal-900 via-purple-500 to-red-500 text-transparent bg-clip-text">
-  Lawroom AI
-</h1>
+          <h1 className="text-4xl font-bold mb-4 bg-gradient-to-r from-teal-900 via-purple-500 to-red-500 text-transparent bg-clip-text">
+            Lawroom AI
+          </h1>
 
           <p className="text-gray-600 mb-8">
             Your legal research assistant for Indian law
@@ -49,8 +49,41 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             ) : (
               <div className="flex justify-start">
                 <div className="bg-gray-100 text-gray-900 px-4 py-2 rounded-lg max-w-xs lg:max-w-2xl relative group">
-                  <div className="whitespace-pre-wrap">
-                    <ReactMarkdown>{message.message}</ReactMarkdown>
+                  <div className="whitespace-pre-wrap prose prose-sm max-w-none">
+                    <ReactMarkdown
+                      components={{
+                        h1: ({ children }) => (
+                          <h1 className="text-xl font-bold mb-2">{children}</h1>
+                        ),
+                        h2: ({ children }) => (
+                          <h2 className="text-lg font-bold mb-2">{children}</h2>
+                        ),
+                        h3: ({ children }) => (
+                          <h3 className="text-base font-bold mb-2">
+                            {children}
+                          </h3>
+                        ),
+                        h4: ({ children }) => (
+                          <h4 className="text-sm font-bold mb-1">{children}</h4>
+                        ),
+                        p: ({ children }) => <p className="mb-2">{children}</p>,
+                        ul: ({ children }) => (
+                          <ul className="list-disc list-inside mb-2">
+                            {children}
+                          </ul>
+                        ),
+                        ol: ({ children }) => (
+                          <ol className="list-decimal list-inside mb-2">
+                            {children}
+                          </ol>
+                        ),
+                        li: ({ children }) => (
+                          <li className="mb-1">{children}</li>
+                        ),
+                      }}
+                    >
+                      {message.message}
+                    </ReactMarkdown>
                   </div>
                   <button
                     onClick={() => copyMessage(message.message)}
@@ -70,8 +103,39 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           <div className="mb-6">
             <div className="flex justify-start">
               <div className="bg-gray-100 text-gray-900 px-4 py-2 rounded-lg max-w-xs lg:max-w-2xl">
-                <div className="whitespace-pre-wrap">
-                  <ReactMarkdown>{streamingMessage}</ReactMarkdown>
+                <div className="whitespace-pre-wrap prose prose-sm max-w-none">
+                  <ReactMarkdown
+                    components={{
+                      h1: ({ children }) => (
+                        <h1 className="text-xl font-bold mb-2">{children}</h1>
+                      ),
+                      h2: ({ children }) => (
+                        <h2 className="text-lg font-bold mb-2">{children}</h2>
+                      ),
+                      h3: ({ children }) => (
+                        <h3 className="text-base font-bold mb-2">{children}</h3>
+                      ),
+                      h4: ({ children }) => (
+                        <h4 className="text-sm font-bold mb-1">{children}</h4>
+                      ),
+                      p: ({ children }) => <p className="mb-2">{children}</p>,
+                      ul: ({ children }) => (
+                        <ul className="list-disc list-inside mb-2">
+                          {children}
+                        </ul>
+                      ),
+                      ol: ({ children }) => (
+                        <ol className="list-decimal list-inside mb-2">
+                          {children}
+                        </ol>
+                      ),
+                      li: ({ children }) => (
+                        <li className="mb-1">{children}</li>
+                      ),
+                    }}
+                  >
+                    {streamingMessage}
+                  </ReactMarkdown>
                 </div>
                 <div className="animate-pulse inline-block w-2 h-4 bg-gray-400 ml-1"></div>
               </div>

@@ -298,5 +298,47 @@ def update_file_status(file_id: str, status: str):
     except Exception as e:
         logger.error(f"Error updating file status: {e}")
 
+def delete_latest_10_sessions_data():
+    try:
+        # Step 1: Fetch the latest 10 sessions sorted by created_at
+        latest_sessions = list(
+            sessions_collection.find({}, {"_id": 0, "session_id": 1})
+            .sort("created_at", -1)
+            .limit(10)
+        )
+        session_ids = [s["session_id"] for s in latest_sessions]
+        logger.info(f"Deleting data for session_ids: {session_ids}")
+
+        # Step 2: Delete sessions
+        delete_session_result = sessions_collection.delete_many({"session_id": {"$in": session_ids}})
+        logger.info(f"Deleted {delete_session_result.deleted_count} session documents.")
+
+        # Step 3: Delete conversations
+        delete_conv_result = conversations_collection.delete_many({"session_id": {"$in": session_ids}})
+        logger.info(f"Deleted {delete_conv_result.deleted_count} conversation messages.")
+
+        # Step 4: Fetch all files related to these sessions
+        related_files = list(files_collection.find({"session_id": {"$in": session_ids}}, {"_id": 0, "file_id": 1}))
+        file_ids = [f["file_id"] for f in related_files]
+        
+        # Step 5: Delete file metadata
+        delete_file_result = files_collection.delete_many({"file_id": {"$in": file_ids}})
+        logger.info(f"Deleted {delete_file_result.deleted_count} file metadata documents.")
+
+        # Step 6: Delete related embeddings
+        delete_embedding_result = embeddings_collection.delete_many({"file_id": {"$in": file_ids}})
+        logger.info(f"Deleted {delete_embedding_result.deleted_count} embedding documents.")
+
+        return {
+            "status": "success",
+            "deleted_sessions": session_ids,
+            "deleted_file_ids": file_ids
+        }
+
+    except Exception as e:
+        logger.error(f"Error deleting latest 10 session data: {e}")
+        return {"status": "error", "message": str(e)}
+
+
 if __name__ == "__main__":
-    pass
+    delete_latest_10_sessions_data

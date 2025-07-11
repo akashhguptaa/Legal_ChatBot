@@ -12,6 +12,7 @@ from typing import (
 )
 from config.config import OPENAI_API_KEY
 
+# Original LLM for backward compatibility and session title generation
 llm = None
 try:
     if not OPENAI_API_KEY:
@@ -28,29 +29,62 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize OpenAI client: {e}\n{traceback.format_exc()}")
 
+# Import the new graph-based chat function
+try:
+    import importlib
 
-# Chat function to talk to the LLM
+    legal_graph_module = importlib.import_module("services.legal_graph")
+    chat_llm_with_graph = legal_graph_module.chat_llm_with_graph
+    LANGGRAPH_AVAILABLE = True
+    logger.info("LangGraph integration available")
+except ImportError as e:
+    LANGGRAPH_AVAILABLE = False
+    logger.warning(f"LangGraph not available, falling back to original chat_llm: {e}")
+except Exception as e:
+    LANGGRAPH_AVAILABLE = False
+    logger.warning(f"LangGraph not available, falling back to original chat_llm: {e}")
+
+
+# Enhanced chat function with LangGraph integration
 async def chat_llm(
     query: str,
     conversation_history: Optional[List[Dict[str, str]]] = None,
+    session_id: str = None,
 ):
+    """
+    Enhanced chat function that uses LangGraph when available and session_id is provided
+    """
+
+    # Use LangGraph if available and session_id is provided
+    if LANGGRAPH_AVAILABLE and session_id:
+        try:
+            response_text = ""
+            async for chunk in chat_llm_with_graph(
+                query, conversation_history, session_id
+            ):
+                response_text += chunk
+                yield chunk
+            return
+        except Exception as e:
+            logger.error(f"Error with LangGraph, falling back to original: {e}")
+            # Fall through to original implementation
+
+    # Original implementation (fallback)
     system_prompt = """
-        You are a LAW GPT an online lawyer and YOUR NAME IS GPT_LAW.
-        who knows about all the laws in the world, to guide the users for laws in the world.
-        from the information of laws from different countries, if available, however if a user asks for any other thing, 
-        except for laws, you will not answer it, but politely say that you are a LAW GPT and you can only answer questions related to laws.
+        You are LAW_GPT, an AI assistant who can help with various topics.
+        You are knowledgeable and can provide helpful information on many subjects.
         FEW IMPORTANT THINGS TO KEEP IN MIND:
-        1. You are a LAW GPT, you can only answer questions related to laws.
+        1. You are helpful and informative.
         2. Your answers should be concise and to the point.
         3. If you don't know the answer, say "I don't know" instead of making up an answer.
         4. Do not be monotonous, try to vary your responses, and use emojis only when necessary.
-    
-
+        5. Use proper markdown formatting with headers (###), bullet points, and line breaks.
+        6. Always use proper line breaks (\\n) for readability.
+        7. Use ### for section headers when organizing information.
     """
 
     conversation_context = ""
     if conversation_history:
-
         conversation_context = "\nPrevious Conversation:\n"
         for msg in conversation_history:
             if msg.get("role") == "user":
@@ -66,20 +100,15 @@ async def chat_llm(
     """
 
     prompt_template = ChatPromptTemplate.from_messages(
-        [("system", system_prompt),
-         ("human", human_prompt)]
+        [("system", system_prompt), ("human", human_prompt)]
     )
 
     chain = prompt_template | llm | StrOutputParser()
 
-    try: 
+    try:
         async for chunk in chain.astream(
-            {
-                'query': query,
-                'conversation_context': conversation_context
-            }
+            {"query": query, "conversation_context": conversation_context}
         ):
-
             yield chunk
 
     except Exception as e:
@@ -90,11 +119,11 @@ async def chat_llm(
 # Function to generate a session title using the LLM
 async def generate_session_title(user_message: str) -> str:
     prompt = f"Generate a concise, relevant title (max 8 words) for a legal chat session based on this user message: '{user_message}'. Return only the title, no extra text and be unique with the titles."
-    
+
     try:
         chain = llm | StrOutputParser()
         result = await chain.ainvoke(prompt)
-   
+
         title = result.strip().replace("\n", " ")
         if len(title) > 60:
             title = title[:60] + "..."
@@ -110,7 +139,12 @@ if __name__ == "__main__":
     import asyncio
 
     async def main():
-        response = await chat_llm("What is the law regarding contracts in India?")
-        print(response)
+        # Test both modes
+        print("Testing original mode:")
+        async for chunk in chat_llm("What is contract law?"):
+            print(chunk, end="")
+        print("\n\nTesting with session ID:")
+        async for chunk in chat_llm("What is contract law?", session_id="test-session"):
+            print(chunk, end="")
 
     asyncio.run(main())

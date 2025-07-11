@@ -1,0 +1,3 @@
+from utils.dataBase_integration import delete_latest_10_sessions_data
+
+delete_latest_10_sessions_data()
