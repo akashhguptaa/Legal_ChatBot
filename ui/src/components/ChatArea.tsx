@@ -1,0 +1,87 @@
+import React from "react";
+import { Copy } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+
+interface Message {
+  role: "user" | "ai";
+  message: string;
+  created_at: string;
+}
+
+interface ChatAreaProps {
+  messages: Message[];
+  streamingMessage: string;
+  isEmptyChat: boolean;
+  copyMessage: (text: string) => void;
+  messagesEndRef: React.RefObject<HTMLDivElement | null>;
+}
+
+const ChatArea: React.FC<ChatAreaProps> = ({
+  messages,
+  streamingMessage,
+  isEmptyChat,
+  copyMessage,
+  messagesEndRef,
+}) => (
+  <div className="flex-1 overflow-y-auto">
+    {isEmptyChat ? (
+      <div className="flex flex-col items-center justify-center h-full px-4">
+        <div className="text-center max-w-2xl">
+        <h1 className="text-4xl font-bold mb-4 bg-gradient-to-r from-teal-900 via-purple-500 to-red-500 text-transparent bg-clip-text">
+  Lawroom AI
+</h1>
+
+          <p className="text-gray-600 mb-8">
+            Your legal research assistant for Indian law
+          </p>
+        </div>
+      </div>
+    ) : (
+      <div className="max-w-4xl mx-auto px-4 py-6">
+        {messages.map((message: Message, index: number) => (
+          <div key={index} className="mb-6">
+            {message.role === "user" ? (
+              <div className="flex justify-end">
+                <div className="bg-blue-600 text-white px-4 py-2 rounded-lg max-w-xs lg:max-w-md">
+                  {message.message}
+                </div>
+              </div>
+            ) : (
+              <div className="flex justify-start">
+                <div className="bg-gray-100 text-gray-900 px-4 py-2 rounded-lg max-w-xs lg:max-w-2xl relative group">
+                  <div className="whitespace-pre-wrap">
+                    <ReactMarkdown>{message.message}</ReactMarkdown>
+                  </div>
+                  <button
+                    onClick={() => copyMessage(message.message)}
+                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <Copy
+                      size={14}
+                      className="text-gray-500 hover:text-gray-700"
+                    />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+        {streamingMessage && (
+          <div className="mb-6">
+            <div className="flex justify-start">
+              <div className="bg-gray-100 text-gray-900 px-4 py-2 rounded-lg max-w-xs lg:max-w-2xl">
+                <div className="whitespace-pre-wrap">
+                  <ReactMarkdown>{streamingMessage}</ReactMarkdown>
+                </div>
+                <div className="animate-pulse inline-block w-2 h-4 bg-gray-400 ml-1"></div>
+              </div>
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+    )}
+  </div>
+);
+
+export default ChatArea;

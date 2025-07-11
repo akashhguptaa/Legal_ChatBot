@@ -1,103 +1,236 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import React, { useState, useEffect, useRef } from "react";
+import Sidebar from "@/components/Sidebar";
+import ChatArea from "../components/ChatArea";
+import MessageInput from "../components/MessageInput";
+
+interface Message {
+  role: "user" | "ai";
+  message: string;
+  created_at: string;
+}
+
+interface ChatSession {
+  session_id: string;
+  title: string;
+  created_at: string;
+}
+
+export default function LawroomAI() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputValue, setInputValue] = useState("");
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [streamingMessage, setStreamingMessage] = useState("");
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, streamingMessage]);
+
+  useEffect(() => {
+    fetchSessions(); // Only on mount
+  }, []);
+
+  // Open WebSocket once per session or on mount
+  useEffect(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      connectWebSocket();
+    }
+    // Clean up on unmount
+    return () => {
+      wsRef.current?.close();
+    };
+  }, [currentSessionId]);
+
+  const connectWebSocket = () => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      return;
+    }
+    wsRef.current = new WebSocket("ws://localhost:8000/ws/chat");
+    wsRef.current.onopen = () => {};
+    wsRef.current.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.session_id) {
+          setCurrentSessionId(data.session_id);
+        }
+      } catch {
+        // This is streaming text
+        setStreamingMessage((prev) => prev + event.data);
+      }
+    };
+    wsRef.current.onclose = () => {};
+    wsRef.current.onerror = (error) => {
+      console.error("WebSocket error:", error);
+    };
+  };
+
+  const fetchSessions = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/sessions");
+      const data = await response.json();
+      if (data.status === "success") {
+        setSessions(data.sessions);
+      }
+    } catch (error) {
+      console.error("Error fetching sessions:", error);
+    }
+  };
+
+  const fetchChatHistory = async (sessionId: string) => {
+    try {
+      const response = await fetch(`http://localhost:8000/chat/${sessionId}`);
+      const data = await response.json();
+      if (Array.isArray(data)) {
+        setMessages(data);
+      }
+    } catch (error) {
+      console.error("Error fetching chat history:", error);
+    }
+  };
+
+  const sendMessage = async () => {
+    if (!inputValue.trim() || isLoading) return;
+    const userMessage = inputValue.trim();
+    setInputValue("");
+    setIsLoading(true);
+    setStreamingMessage("");
+    // Add user message to UI immediately
+    const newUserMessage: Message = {
+      role: "user",
+      message: userMessage,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, newUserMessage]);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          query: userMessage,
+          session_id: currentSessionId,
+        })
+      );
+    }
+  };
+
+  // Listen for end of streaming and finalize AI message
+  useEffect(() => {
+    if (!isLoading) return;
+    // If streamingMessage is being updated, wait for a pause (e.g., 500ms of no new data)
+    const timeout = setTimeout(() => {
+      if (streamingMessage) {
+        const newAiMessage: Message = {
+          role: "ai",
+          message: streamingMessage,
+          created_at: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, newAiMessage]);
+        setStreamingMessage("");
+        setIsLoading(false);
+      }
+    }, 500);
+    return () => clearTimeout(timeout);
+  }, [streamingMessage, isLoading]);
+
+  const startNewChat = () => {
+    setCurrentSessionId(null);
+    setMessages([]);
+    setStreamingMessage("");
+    connectWebSocket();
+  };
+
+  // Only call fetchChatHistory when a session is selected
+  const selectSession = (sessionId: string) => {
+    setCurrentSessionId(sessionId);
+    fetchChatHistory(sessionId);
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
+  const copyMessage = (text: string) => {
+    navigator.clipboard.writeText(text);
+  };
+
+  const isEmptyChat = messages.length === 0 && !streamingMessage;
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <div className="flex h-screen bg-gray-50">
+      <Sidebar
+        sessions={sessions}
+        currentSessionId={currentSessionId}
+        onStartNewChat={startNewChat}
+        onSelectSession={selectSession}
+      />
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <header className="bg-white border-b border-gray-200 px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-8">
+              <h1 className="text-xl font-bold bg-gradient-to-r from-teal-600 via-purple-600 to-pink-500 text-transparent bg-clip-text">
+                Lawroom AI
+              </h1>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+              <nav className="hidden md:flex items-center gap-6">
+                <a href="#" className="text-gray-600 hover:text-gray-900">
+                  Home
+                </a>
+                <a href="#" className="text-gray-600 hover:text-gray-900">
+                  About Us
+                </a>
+                <a href="#" className="text-gray-600 hover:text-gray-900">
+                  Legal AI Chat
+                </a>
+                <a href="#" className="text-gray-600 hover:text-gray-900">
+                  Smart Drafting
+                </a>
+                <a href="#" className="text-gray-600 hover:text-gray-900">
+                  Upcoming Features
+                </a>
+              </nav>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-600">Akash Gupta</span>
+                <div className="w-8 h-8 bg-red-500 rounded-full flex items-center justify-center">
+                  <span className="text-white text-sm font-medium">A</span>
+                </div>
+              </div>
+              <button className="bg-cyan-400 text-white px-4 py-2 rounded-lg text-sm font-medium">
+                Try Now
+              </button>
+            </div>
+          </div>
+        </header>
+        <ChatArea
+          messages={messages}
+          streamingMessage={streamingMessage}
+          isEmptyChat={isEmptyChat}
+          copyMessage={copyMessage}
+          messagesEndRef={messagesEndRef}
+        />
+        <MessageInput
+          inputValue={inputValue}
+          setInputValue={setInputValue}
+          isLoading={isLoading}
+          sendMessage={sendMessage}
+          handleKeyPress={handleKeyPress}
+          inputRef={inputRef}
+        />
+      </div>
     </div>
   );
 }
