@@ -270,35 +270,62 @@ def count_tokens(text: str) -> int:
         return len(text) // 4
     return len(tokenizer.encode(text))
 
-
-def extract_pdf_sections(pdf_path: str) -> List[Dict[str, Any]]:
-    """Simple PDF chunking by pages."""
+def extract_pdf_sections(pdf_path: str, max_tokens: int = 500) -> List[Dict[str, Any]]:
+    """Chunk PDF by logical sections with token limits"""
     sections = []
+    current_section = []
+    current_tokens = 0
+    hierarchy = 0
     
-    try:
-        with open(pdf_path, "rb") as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            
-            for page_num in range(len(pdf_reader.pages)):
-                page = pdf_reader.pages[page_num]
-                text = page.extract_text()
+    with open(pdf_path, "rb") as file:
+        pdf_reader = PyPDF2.PdfReader(file)
+        
+        for page_num, page in enumerate(pdf_reader.pages, 1):
+            text = page.extract_text()
+            if not text.strip():
+                continue
                 
-                if text.strip():
-                    sections.append({
-                        "section_title": f"Page {page_num + 1}",
-                        "content": text,
-                        "page_start": page_num + 1,
-                        "page_end": page_num + 1,
-                        "token_count": count_tokens(text),
-                        "hierarchy_level": 0,
-                        "section_index": page_num
-                    })
-        
-        return sections
-        
-    except Exception as e:
-        logger.error(f"Error extracting PDF: {e}")
-        return []
+            lines = text.split('\n')
+            header = None
+
+            if len(lines) > 1 and _is_section_header(lines[0]):
+                header = lines[0]
+                hierarchy = _get_header_level(header)
+                remaining_text = "\n".join(lines[1:])
+            else:
+                remaining_text = text
+
+            tokens = count_tokens(remaining_text)
+            
+            if (header or current_tokens + tokens > max_tokens) and current_section:
+                sections.append(_create_section(current_section))
+                current_section = []
+                current_tokens = 0
+                
+            current_section.append({
+                "page": page_num,
+                "header": header,
+                "text": remaining_text,
+                "tokens": tokens,
+                "hierarchy": hierarchy
+            })
+            current_tokens += tokens
+            
+        if current_section:
+            sections.append(_create_section(current_section))
+            
+    return sections
+
+def _create_section(pages: List[Dict]) -> Dict[str, Any]:
+    """Combine pages into a coherent section"""
+    return {
+        "section_title": pages[0]["header"] or f"Section starting page {pages[0]['page']}",
+        "content": "\n".join(p["text"] for p in pages),
+        "page_start": pages[0]["page"],
+        "page_end": pages[-1]["page"],
+        "token_count": sum(p["tokens"] for p in pages),
+        "hierarchy_level": pages[0]["hierarchy"]
+    }
 
 
 def _is_section_header(line: str) -> bool:

@@ -155,6 +155,15 @@ export default function LawroomAI() {
     setUploadProgress(null);
 
     try {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "user" as const,
+          message: `Uploaded: ${file.name}`,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+
       setStreamingMessage("Starting file upload...");
 
       const sessionId = currentSessionIdRef.current || currentSessionId;
@@ -165,21 +174,20 @@ export default function LawroomAI() {
       console.log(
         "Uploading file with session ID:",
         sessionId || "null (will be created by backend)"
-      ); 
-      console.log("Ref session ID:", currentSessionIdRef.current); 
-      console.log("State session ID:", currentSessionId); 
+      );
+      console.log("Ref session ID:", currentSessionIdRef.current);
+      console.log("State session ID:", currentSessionId);
       console.log("About to call streamSummary with sessionId:", sessionId);
 
       let summary = "";
       const confirmedSessionId = await streamSummary(
         file,
-        sessionId, 
+        sessionId,
         (chunk) => {
           summary += chunk;
           setStreamingMessage(summary);
         },
         (status, message) => {
-          // Handle status updates
           switch (status) {
             case "processing":
               setStreamingMessage("📄 Processing PDF file...");
@@ -203,13 +211,13 @@ export default function LawroomAI() {
         }
       );
 
-      // Update session ID 
+      // Update session ID
       if (confirmedSessionId) {
         if (!sessionId || confirmedSessionId !== sessionId) {
-          console.log("Backend confirmed session ID:", confirmedSessionId); 
+          console.log("Backend confirmed session ID:", confirmedSessionId);
 
           setCurrentSessionId(confirmedSessionId);
-          currentSessionIdRef.current = confirmedSessionId; 
+          currentSessionIdRef.current = confirmedSessionId;
 
           if (!sessionId) {
             const newSession: ChatSession = {
@@ -219,7 +227,6 @@ export default function LawroomAI() {
             };
             setSessions((prev) => [newSession, ...prev]);
           } else {
-          
             setSessions((prev) => {
               const updatedSessions = prev.map((session) =>
                 session.session_id === sessionId
@@ -230,7 +237,7 @@ export default function LawroomAI() {
             });
           }
         } else {
-          console.log("Backend confirmed same session ID:", confirmedSessionId); 
+          console.log("Backend confirmed same session ID:", confirmedSessionId);
         }
       }
 
@@ -288,9 +295,9 @@ export default function LawroomAI() {
     isStreamingRef.current = true;
 
     const sessionIdToUse = currentSessionIdRef.current || currentSessionId;
-    console.log("Sending message with session ID:", sessionIdToUse); 
-    console.log("Ref session ID:", currentSessionIdRef.current); 
-    console.log("State session ID:", currentSessionId); 
+    console.log("Sending message with session ID:", sessionIdToUse);
+    console.log("Ref session ID:", currentSessionIdRef.current);
+    console.log("State session ID:", currentSessionId);
 
     const newUserMessage: Message = {
       role: "user",
@@ -307,9 +314,9 @@ export default function LawroomAI() {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       const messageData = {
         query: userMessage,
-        session_id: sessionIdToUse, 
+        session_id: sessionIdToUse,
       };
-      console.log("Sending WebSocket message:", messageData); 
+      console.log("Sending WebSocket message:", messageData);
       wsRef.current.send(JSON.stringify(messageData));
     } else {
       console.error("WebSocket not connected");
@@ -339,9 +346,8 @@ export default function LawroomAI() {
   }, [streamingMessage, isLoading]);
 
   const startNewChat = () => {
-  
     setCurrentSessionId(null);
-    currentSessionIdRef.current = null; 
+    currentSessionIdRef.current = null;
     setMessages([]);
     setStreamingMessage("");
     setIsLoading(false);
@@ -352,7 +358,7 @@ export default function LawroomAI() {
 
   const selectSession = (sessionId: string) => {
     setCurrentSessionId(sessionId);
-    currentSessionIdRef.current = sessionId; 
+    currentSessionIdRef.current = sessionId;
     setStreamingMessage("");
     setIsLoading(false);
     isStreamingRef.current = false;
@@ -474,7 +480,6 @@ export default function LawroomAI() {
           sendMessage={sendMessage}
           handleKeyPress={handleKeyPress}
           inputRef={inputRef}
-      
           onFileUpload={() => fileInputRef.current?.click()}
           isUploading={isUploading}
           onDrop={handleDrop}

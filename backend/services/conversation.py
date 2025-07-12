@@ -70,7 +70,6 @@ async def chat_llm(
         3. If you don't know the answer, say "I don't know" instead of making up an answer.
         4. Do not be monotonous, try to vary your responses, and use emojis only when necessary.
         5. Use proper markdown formatting with headers (###), bullet points, and line breaks.
-        6. Always use proper line breaks (\\n) for readability.
         7. Use ### for section headers when organizing information.
     """
 

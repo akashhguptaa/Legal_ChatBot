@@ -25,7 +25,6 @@ from utils.dataBase_integration import (
 )
 from utils.faiss_integration import (
     create_faiss_embeddings,
-    search_similar_sections,
     get_document_info,
     process_query_search,
 )
