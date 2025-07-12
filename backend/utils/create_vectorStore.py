@@ -75,51 +75,8 @@ def extract_pdf_sections(pdf_path: str) -> List[Dict[str, Any]]:
     
     return chunks
 
-def extract_pdf_sections(pdf_path: str) -> List[Dict[str, Any]]:
-    """Enhanced PDF extraction with structure preservation"""
-    chunker = LegalDocumentChunker()
-    
-    with open(pdf_path, 'rb') as file:
-        pdf_reader = PyPDF2.PdfReader(file)
-        
-        full_text = ""
-        page_mapping = {}
-        current_char = 0
-        
-        for page_num, page in enumerate(pdf_reader.pages):
-            page_text = page.extract_text()
-            page_mapping[current_char] = page_num + 1
-            full_text += page_text + "\n"
-            current_char = len(full_text)
-        
-        # Extract hierarchical sections
-        sections = chunker.extract_hierarchical_sections(full_text)
-        
-        # Create overlapping chunks
-        chunks = chunker.create_overlapping_chunks(sections)
-        
-        # Add page numbers to chunks
-        for chunk in chunks:
-            # Estimate page number based on content position
-            chunk['page_start'] = 1
-            chunk['page_end'] = len(pdf_reader.pages)
-            
-            # Add metadata for better retrieval
-            chunk['metadata'] = {
-                'document_type': 'legal',
-                'hierarchy_level': len(chunk.get('hierarchy', [])),
-                'has_subsections': any(re.match(r'^\s*\([a-z0-9]\)', line) 
-                                     for line in chunk['content'].split('\n')),
-                'contains_definitions': 'definition' in chunk['content'].lower(),
-                'contains_obligations': any(word in chunk['content'].lower() 
-                                          for word in ['shall', 'must', 'required', 'obligation']),
-                'contains_dates': bool(re.search(r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b', chunk['content'])),
-                'word_count': len(chunk['content'].split())
-            }
-    
-    return chunks
 
-async def create_embeddings_batch(sections: List[Dict], file_id: str) -> int:
+async def create_embeddings_batch(sections: List[Dict], file_id: str, filename:str = None) -> int:
     """Create embeddings for sections in batches with parallel processing"""
     batch_size = 10
     total_tokens = 0
@@ -138,6 +95,7 @@ async def create_embeddings_batch(sections: List[Dict], file_id: str) -> int:
             for j, (section, embedding) in enumerate(zip(batch_sections, embeddings)):
                 doc = {
                     'file_id': file_id,
+                    'filename': filename,  
                     'section_index': batch_index * batch_size + j,
                     'section_title': section['section_title'],
                     'content': section['content'],
@@ -159,7 +117,8 @@ async def create_embeddings_batch(sections: List[Dict], file_id: str) -> int:
                     doc['total_parts'] = section.get('total_parts', 1)
                 
                 embedding_docs.append(doc)
-            
+
+            logger.info(f"Batch {batch_index}: Processed {len(embedding_docs)} embeddings")
             return embedding_docs, batch_tokens
             
         except Exception as e:

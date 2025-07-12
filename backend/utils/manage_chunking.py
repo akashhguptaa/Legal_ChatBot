@@ -18,11 +18,11 @@ class LegalDocumentChunker:
         self.legal_section_patterns = [
             r'^\s*(ARTICLE|Article|SECTION|Section|CHAPTER|Chapter)\s+([IVX]+|\d+)',
             r'^\s*(\d+)\.\s*([A-Z][^.]*\.?)',
-            r'^\s*([A-Z][A-Z\s]{3,})\s*$',  # ALL CAPS headers
+            r'^\s*([A-Z][A-Z\s]{3,})\s*$',  
             r'^\s*(WHEREAS|THEREFORE|NOW THEREFORE)',
             r'^\s*(Definitions?|Obligations?|Representations?|Warranties?|Termination|Liability|Confidentiality)',
-            r'^\s*\([a-z]\)\s*',  # (a), (b), (c) subsections
-            r'^\s*\([0-9]+\)\s*',  # (1), (2), (3) subsections
+            r'^\s*\([a-z]\)\s*',  
+            r'^\s*\([0-9]+\)\s*',  
         ]
     
     def is_section_header(self, line: str) -> bool:

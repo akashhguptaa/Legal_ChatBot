@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from config.config import OPENAI_API_KEY
 from utils.dataBase_integration import (
-    search_similar_sections,
+    process_query_search,  # Changed from search_similar_sections
     files_collection,
     get_file_metadata,
 )
@@ -32,11 +32,6 @@ llm = ChatOpenAI(
     temperature=0.1,
     streaming=True,
 )
-
-embeddings_model = OpenAIEmbeddings(
-    api_key=OPENAI_API_KEY, model="text-embedding-3-small"
-)
-
 
 # State definition
 class GraphState(BaseModel):
@@ -91,22 +86,21 @@ class LegalChatGraph:
     async def _route_query(self, state: GraphState) -> GraphState:
         """Determine if query is document-specific, general, or hybrid"""
         try:
-            # Check if session has uploaded files
+            # Checking if session has uploaded files
             session_files = list(
                 files_collection.find(
                     {"session_id": state.session_id},
-                    {"_id": 0, "file_id": 1, "safe_filename": 1},
+                    {"_id": 0, "file_id": 1, "filename": 1},
                 )
             )
 
             state.session_files = session_files
 
-            # Debug logging
             logger.info(
-                f"Session {state.session_id} has {len(session_files)} files: {[f['safe_filename'] for f in session_files]}"
+                f"Session {state.session_id} has {len(session_files)} files: {[f['filename'] for f in session_files]}"
             )
 
-            # If no files, definitely general
+            # If no files, then general routing
             if not session_files:
                 state.route_decision = "general"
                 logger.info(
@@ -114,7 +108,6 @@ class LegalChatGraph:
                 )
                 return state
 
-            # Use LLM to classify the query
             routing_prompt = ChatPromptTemplate.from_template(
                 """
             Analyze this user query and determine the best routing strategy:
@@ -132,7 +125,7 @@ class LegalChatGraph:
             """
             )
 
-            file_list = [f["safe_filename"] for f in session_files]
+            file_list = [f["filename"] for f in session_files]
 
             chain = routing_prompt | llm | StrOutputParser()
             decision = await chain.ainvoke(
@@ -170,20 +163,16 @@ class LegalChatGraph:
                 state.response = "I don't see any uploaded documents in this session. Please upload a document first."
                 return state
 
-            # Create query embedding
-            query_embedding = await embeddings_model.aembed_query(state.query)
+            query_embedding = state.query
 
-            # Search relevant sections from all files in session
             all_relevant_sections = []
-            for file_info in state.session_files:
-                file_sections = search_similar_sections(
-                    query_embedding=query_embedding,
-                    file_id=file_info["file_id"],
-                    limit=3,
-                )
-                all_relevant_sections.extend(file_sections)
 
-            # Sort by similarity and take top 5
+            for file_info in state.session_files:
+                logger.info(f"Processing query: {state.query} for file: {file_info['file_id']}")
+                result = process_query_search(state.query, file_info["file_id"])
+                if result.get("data", {}).get("results"):
+                    all_relevant_sections.extend(result["data"]["results"])
+
             all_relevant_sections.sort(
                 key=lambda x: x.get("similarity", 0), reverse=True
             )
@@ -231,9 +220,8 @@ class LegalChatGraph:
             6. If asked about document sections, types, or content, provide detailed answers
             7. Don't restrict yourself to only legal questions - answer any question about the uploaded document
             8. Use proper markdown formatting with headers (###), bullet points, and line breaks
-            9. Always use proper line breaks (\\n) for readability
-            10. Use ### for section headers when organizing information
-            
+            9. Use ### for section headers when organizing information
+
             Format your response with proper markdown structure and line breaks for readability.
             
             Answer:
@@ -242,11 +230,13 @@ class LegalChatGraph:
 
             conversation_context = ""
             if state.conversation_history:
-                for msg in state.conversation_history[
-                    -6:
-                ]:  # Last 6 messages for context
-                    role = "User" if msg.get("role") == "user" else "Assistant"
+                for msg in state.conversation_history[-6:]:
+                    role = "User" if msg.get("role") == "user" else "ai"
                     conversation_context += f"{role}: {msg['message']}\n"
+
+                    logger.info(
+                        f"Conversation history for session {state.session_id}: {msg['message'][:50]}..."
+                    )
 
             chain = document_prompt | llm | StrOutputParser()
 
@@ -275,7 +265,7 @@ class LegalChatGraph:
         try:
             general_prompt = ChatPromptTemplate.from_template(
                 """
-            You are LAW_GPT, an AI assistant. Answer questions with accurate, helpful information.
+            You are Lawroom AI, an AI assistant. Answer questions with accurate, helpful information.
             
             Conversation History:
             {conversation_history}
@@ -286,11 +276,14 @@ class LegalChatGraph:
             1. Provide accurate and helpful information
             2. Be concise and to the point
             3. If you don't know something, say so
-            4. You can answer questions about various topics, not just legal matters
-            5. Use proper markdown formatting with headers (###), bullet points, and line breaks
-            6. Use emojis sparingly and only when appropriate
-            7. Always use proper line breaks (\\n) for readability
-            8. Use ### for section headers when organizing information
+            4. Try to answer as many things as you can, just adding laws and legal principles to it, 
+                for example, if a user asks a vauge question about, tell me about sports, 
+                then find the relevant laws and legal principles related to sports,
+                example2: if a user asks for something related to resume, or anything can you solve this problem, 
+                then find the relevant laws and legal principles related to resume, or anything can you solve this problem,
+            
+            5. Only for the queries who are highly out of the scope of legal, then answer that I am Lawroom AI, an AI assistant, I can only answer questions related to legal topics,
+        
             
             Format your response with proper markdown structure and line breaks for readability.
             
@@ -325,19 +318,18 @@ class LegalChatGraph:
     async def _handle_hybrid_query(self, state: GraphState) -> GraphState:
         """Handle queries that benefit from both document context and general knowledge"""
         try:
-            # First get document context (similar to document_query)
+
             document_context = ""
             if state.session_files:
-                query_embedding = await embeddings_model.aembed_query(state.query)
+                query_embedding = state.query
 
                 all_relevant_sections = []
                 for file_info in state.session_files:
-                    file_sections = search_similar_sections(
-                        query_embedding=query_embedding,
-                        file_id=file_info["file_id"],
-                        limit=2,  # Fewer sections for hybrid approach
-                    )
-                    all_relevant_sections.extend(file_sections)
+                    logger.info("processing query: " + state.query + " for file: " + file_info["file_id"])
+                    result = process_query_search(state.query, file_info["file_id"])
+                    
+                    if result.get("data", {}).get("results"):
+                        all_relevant_sections.extend(result["data"]["results"])
 
                 all_relevant_sections.sort(
                     key=lambda x: x.get("similarity", 0), reverse=True
@@ -356,7 +348,6 @@ class LegalChatGraph:
                         )
                     document_context = "\n---\n".join(context_parts)
 
-            # Generate response using both document context and general knowledge
             hybrid_prompt = ChatPromptTemplate.from_template(
                 """
             You are LAW_GPT, a legal assistant. Answer the user's question using both the provided document context (if available) and your general legal knowledge.
@@ -427,10 +418,8 @@ class LegalChatGraph:
         )
 
         try:
-            # Run the graph
             final_state = await self.graph.ainvoke(initial_state)
 
-            # Handle both dict and GraphState returns
             if isinstance(final_state, dict):
                 response = final_state.get("response", "")
             else:

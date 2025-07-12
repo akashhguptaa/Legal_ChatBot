@@ -15,7 +15,6 @@ from loguru import logger
 
 from uvicorn.protocols.utils import ClientDisconnected
 
-from services import doc_chat
 from utils.dataBase_integration import (
     add_message,
     fetch_all_conversations,
@@ -43,7 +42,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust for production
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -60,7 +59,7 @@ async def websocket_endpoint(websocket: WebSocket):
             query = data.get("query", "").strip()
             session_id = data.get("session_id")
 
-            title = None  # Track if we need to send title back
+            title = None  
 
             if not session_id:
                 session_id = str(uuid.uuid4())
@@ -70,17 +69,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     f"Created new session {session_id} for chat (no session_id provided)"
                 )
 
-                # Send session_id AND title back to frontend
                 await websocket.send_json(
                     {
                         "session_id": session_id,
-                        "title": title.strip("\"'"),  # Remove quotes here
+                        "title": title.strip("\"'"),  
                         "info": "New session created",
                     }
                 )
             else:
                 logger.info(f"Received session_id for chat: {session_id}")
-                # Verify session exists, if not create it
+
                 existing_session = sessions_collection.find_one(
                     {"session_id": session_id}
                 )
@@ -96,7 +94,7 @@ async def websocket_endpoint(websocket: WebSocket):
             conversation_history = fetch_all_conversations(session_id) or []
 
             response_text = ""
-            # UPDATED: Pass session_id to enable LangGraph routing
+
             async for response in chat_llm(query, conversation_history, session_id):
                 response_text += response
                 try:
@@ -144,23 +142,19 @@ async def upload_and_stream_summary(
 ):
     """Upload PDF and stream summary generation."""
 
-    # Validate file type
     if not file.content_type.startswith("application/pdf"):
         raise HTTPException(400, "Invalid file type. PDF files only.")
 
-    # Generate IDs and handle session
     file_id = str(uuid.uuid4())
     if not session_id:
         session_id = str(uuid.uuid4())
 
-    # Ensure session exists
     if not sessions_collection.find_one({"session_id": session_id}):
         add_session(session_id, f"Document: {file.filename}")
 
-    # Process file
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
         temp_path = temp_file.name
-        # Stream file content
+
         async with aiofiles.open(temp_path, "wb") as buffer:
             chunk_size = 8192
             while True:
@@ -170,11 +164,10 @@ async def upload_and_stream_summary(
                 await buffer.write(chunk)
 
     try:
-        # Extract and process
         sections = extract_pdf_sections(temp_path)
-        total_tokens = await create_embeddings_batch(sections, file_id)
+        total_tokens = await create_embeddings_batch(sections, file_id, file.filename)
+        
 
-        # Store metadata
         files_collection.insert_one(
             {
                 "file_id": file_id,
@@ -188,10 +181,8 @@ async def upload_and_stream_summary(
             }
         )
 
-        # Add system message
-        add_message(session_id, f"📄 Uploaded: {file.filename}", "")
+        add_message(session_id, f"Uploaded: {file.filename}", "")
 
-        # Stream summary
         async def stream_summary():
             yield f'data: {{"session_id": "{session_id}"}}\n\n'
 
