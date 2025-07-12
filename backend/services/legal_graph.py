@@ -18,8 +18,11 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel
 
 from config.config import OPENAI_API_KEY
+from utils.faiss_integration import (  # Changed from dataBase_integration
+    process_query_search,
+    search_similar_sections,
+)
 from utils.dataBase_integration import (
-    process_query_search,  # Changed from search_similar_sections
     files_collection,
     get_file_metadata,
 )
@@ -33,6 +36,7 @@ llm = ChatOpenAI(
     streaming=True,
 )
 
+
 # State definition
 class GraphState(BaseModel):
     query: str
@@ -41,9 +45,13 @@ class GraphState(BaseModel):
     route_decision: Optional[str] = None
     document_context: Optional[str] = None
     response: Optional[str] = None
+    response_stream: Optional[Any] = None  # Add this line
     session_files: Optional[List[Dict]] = None
     relevant_sections: Optional[List[Dict]] = None
     error: Optional[str] = None
+    
+    class Config:
+        arbitrary_types_allowed = True  
 
 
 class LegalChatGraph:
@@ -86,7 +94,7 @@ class LegalChatGraph:
     async def _route_query(self, state: GraphState) -> GraphState:
         """Determine if query is document-specific, general, or hybrid"""
         try:
-            # Checking if session has uploaded files
+            # Get files for this session from MongoDB
             session_files = list(
                 files_collection.find(
                     {"session_id": state.session_id},
@@ -157,25 +165,39 @@ class LegalChatGraph:
         return state.route_decision or "general"
 
     async def _handle_document_query(self, state: GraphState) -> GraphState:
-        """Handle document-specific queries using RAG"""
+        """Handle document-specific queries using FAISS RAG"""
         try:
             if not state.session_files:
                 state.response = "I don't see any uploaded documents in this session. Please upload a document first."
                 return state
 
-            query_embedding = state.query
-
             all_relevant_sections = []
 
+            # Search through each file using FAISS
             for file_info in state.session_files:
-                logger.info(f"Processing query: {state.query} for file: {file_info['file_id']}")
-                result = process_query_search(state.query, file_info["file_id"])
-                if result.get("data", {}).get("results"):
-                    all_relevant_sections.extend(result["data"]["results"])
+                file_id = file_info["file_id"]
+                logger.info(f"Processing query: {state.query} for file: {file_id}")
 
-            all_relevant_sections.sort(
-                key=lambda x: x.get("similarity", 0), reverse=True
-            )
+                try:
+                    # Use FAISS search for this file
+                    results = search_similar_sections(
+                        query=state.query, file_id=file_id, limit=5
+                    )
+
+                    if results:
+                        all_relevant_sections.extend(results)
+                        logger.info(
+                            f"Found {len(results)} relevant sections in file {file_id}"
+                        )
+                    else:
+                        logger.info(f"No relevant sections found in file {file_id}")
+
+                except Exception as e:
+                    logger.error(f"Error searching file {file_id}: {e}")
+                    continue
+
+            # Sort by score (FAISS returns similarity scores)
+            all_relevant_sections.sort(key=lambda x: x.get("score", 0), reverse=True)
             top_sections = all_relevant_sections[:5]
 
             state.relevant_sections = top_sections
@@ -189,9 +211,10 @@ class LegalChatGraph:
             for section in top_sections:
                 context_parts.append(
                     f"""
-                Document: {section.get('file_id', 'Unknown')}
+                Document: {section.get('filename', 'Unknown')}
                 Section: {section.get('section_title', 'Untitled')}
                 Content: {section.get('content', '')}
+                Score: {section.get('score', 0):.3f}
                 """
                 )
 
@@ -231,28 +254,22 @@ class LegalChatGraph:
             conversation_context = ""
             if state.conversation_history:
                 for msg in state.conversation_history[-6:]:
-                    role = "User" if msg.get("role") == "user" else "ai"
+                    role = "User" if msg.get("role") == "user" else "AI"
                     conversation_context += f"{role}: {msg['message']}\n"
-
-                    logger.info(
-                        f"Conversation history for session {state.session_id}: {msg['message'][:50]}..."
-                    )
 
             chain = document_prompt | llm | StrOutputParser()
 
             # Stream the response
-            response_parts = []
-            async for chunk in chain.astream(
-                {
-                    "document_context": document_context,
-                    "conversation_history": conversation_context,
-                    "query": state.query,
-                }
-            ):
-                response_parts.append(chunk)
-
-            state.response = "".join(response_parts)
-
+            state.response_stream = chain.astream(
+            {
+                "document_context": document_context,
+                "conversation_history": conversation_context,
+                "query": state.query,
+            }
+        )
+            
+            state.response = "Document analysis complete."
+            
         except Exception as e:
             logger.error(f"Error in document query: {e}")
             state.error = str(e)
@@ -300,13 +317,13 @@ class LegalChatGraph:
             chain = general_prompt | llm | StrOutputParser()
 
             # Stream the response
-            response_parts = []
-            async for chunk in chain.astream(
-                {"conversation_history": conversation_context, "query": state.query}
-            ):
-                response_parts.append(chunk)
-
-            state.response = "".join(response_parts)
+            state.response_stream = chain.astream(
+            {
+                "conversation_history": conversation_context,
+                "query": state.query,
+            }
+        )
+            state.response = "General query processing complete."
 
         except Exception as e:
             logger.error(f"Error in general query: {e}")
@@ -318,21 +335,37 @@ class LegalChatGraph:
     async def _handle_hybrid_query(self, state: GraphState) -> GraphState:
         """Handle queries that benefit from both document context and general knowledge"""
         try:
-
             document_context = ""
             if state.session_files:
-                query_embedding = state.query
-
                 all_relevant_sections = []
-                for file_info in state.session_files:
-                    logger.info("processing query: " + state.query + " for file: " + file_info["file_id"])
-                    result = process_query_search(state.query, file_info["file_id"])
-                    
-                    if result.get("data", {}).get("results"):
-                        all_relevant_sections.extend(result["data"]["results"])
 
+                # Search through each file using FAISS
+                for file_info in state.session_files:
+                    file_id = file_info["file_id"]
+                    logger.info(
+                        f"Processing hybrid query: {state.query} for file: {file_id}"
+                    )
+
+                    try:
+                        # Use FAISS search for this file
+                        results = search_similar_sections(
+                            query=state.query,
+                            file_id=file_id,
+                            limit=3,  # Fewer results for hybrid queries
+                        )
+
+                        if results:
+                            all_relevant_sections.extend(results)
+
+                    except Exception as e:
+                        logger.error(
+                            f"Error searching file {file_id} in hybrid query: {e}"
+                        )
+                        continue
+
+                # Sort by score and take top 3
                 all_relevant_sections.sort(
-                    key=lambda x: x.get("similarity", 0), reverse=True
+                    key=lambda x: x.get("score", 0), reverse=True
                 )
                 top_sections = all_relevant_sections[:3]
 
@@ -341,9 +374,10 @@ class LegalChatGraph:
                     for section in top_sections:
                         context_parts.append(
                             f"""
-                        Document: {section.get('file_id', 'Unknown')}
+                        Document: {section.get('filename', 'Unknown')}
                         Section: {section.get('section_title', 'Untitled')}
                         Content: {section.get('content', '')[:500]}...
+                        Score: {section.get('score', 0):.3f}
                         """
                         )
                     document_context = "\n---\n".join(context_parts)
@@ -385,18 +419,14 @@ class LegalChatGraph:
             chain = hybrid_prompt | llm | StrOutputParser()
 
             # Stream the response
-            response_parts = []
-            async for chunk in chain.astream(
-                {
-                    "document_context": document_context
-                    or "No specific document context available.",
-                    "conversation_history": conversation_context,
-                    "query": state.query,
-                }
-            ):
-                response_parts.append(chunk)
-
-            state.response = "".join(response_parts)
+            state.response_stream = chain.astream(
+            {
+                "document_context": document_context,
+                "conversation_history": conversation_context,
+                "query": state.query,
+            }
+        )
+            state.response = "Hybrid analysis complete."
 
         except Exception as e:
             logger.error(f"Error in hybrid query: {e}")
@@ -420,17 +450,20 @@ class LegalChatGraph:
         try:
             final_state = await self.graph.ainvoke(initial_state)
 
+            # LangGraph returns state as dict, not object
             if isinstance(final_state, dict):
-                response = final_state.get("response", "")
+                response_stream = final_state.get("response_stream")
+                response = final_state.get("response")
             else:
-                response = final_state.response
+                response_stream = getattr(final_state, 'response_stream', None)
+                response = getattr(final_state, 'response', None)
 
-            # Stream the response
-            if response:
-                # Stream character by character to preserve formatting
-                for char in response:
-                    yield char
-                    await asyncio.sleep(0.01)  # Small delay for streaming effect
+            # Stream from the response_stream if available
+            if response_stream:
+                async for chunk in response_stream:
+                    yield chunk
+            elif response:
+                yield response
             else:
                 yield "I'm sorry, I couldn't generate a response. Please try again."
 

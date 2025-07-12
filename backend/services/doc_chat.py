@@ -4,7 +4,7 @@ from langchain_openai import ChatOpenAI
 from typing import List, Dict
 from langchain_core.output_parsers import StrOutputParser
 from config.config import OPENAI_API_KEY
-from utils.create_vectorStore import count_tokens
+from utils.faiss_integration import count_tokens
 from loguru import logger
 
 llm_summary = ChatOpenAI(

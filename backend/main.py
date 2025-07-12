@@ -22,7 +22,12 @@ from utils.dataBase_integration import (
     add_session,
     files_collection,
     sessions_collection,
-    embeddings_collection,
+)
+from utils.faiss_integration import (
+    create_faiss_embeddings,
+    search_similar_sections,
+    get_document_info,
+    process_query_search,
 )
 from services.conversation import chat_llm, generate_session_title
 import os
@@ -31,22 +36,22 @@ from pathlib import Path
 import tempfile
 from datetime import datetime
 
-from utils.create_vectorStore import (
-    create_embeddings_batch,
-    extract_pdf_sections,
-)
-
+from utils.faiss_integration import extract_pdf_sections
 from services.doc_chat import generate_document_summary
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Create FAISS index directory
+FAISS_INDEX_DIR = Path("Faiss_index")
+FAISS_INDEX_DIR.mkdir(exist_ok=True)
 
 
 @app.websocket("/ws/chat")
@@ -59,7 +64,7 @@ async def websocket_endpoint(websocket: WebSocket):
             query = data.get("query", "").strip()
             session_id = data.get("session_id")
 
-            title = None  
+            title = None
 
             if not session_id:
                 session_id = str(uuid.uuid4())
@@ -72,7 +77,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json(
                     {
                         "session_id": session_id,
-                        "title": title.strip("\"'"),  
+                        "title": title.strip("\"'"),
                         "info": "New session created",
                     }
                 )
@@ -113,9 +118,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/chat/{session_id}")
 async def get_chat_history(session_id: str):
-    """
-    Fetch the chat history for a given session ID.
-    """
+    """Fetch the chat history for a given session ID."""
     history = fetch_all_conversations(session_id)
     if not history:
         return {"status": "error", "message": "No chat history found for this session."}
@@ -124,9 +127,7 @@ async def get_chat_history(session_id: str):
 
 @app.get("/sessions")
 async def get_sessions():
-    """
-    Fetch all unique chat sessions, sorted by creation time (earliest first).
-    """
+    """Fetch all unique chat sessions, sorted by creation time (earliest first)."""
     sessions = get_all_sessions_sorted()
     return {"status": "success", "sessions": sessions}
 
@@ -165,8 +166,7 @@ async def upload_and_stream_summary(
 
     try:
         sections = extract_pdf_sections(temp_path)
-        total_tokens = await create_embeddings_batch(sections, file_id, file.filename)
-        
+        total_tokens = await create_faiss_embeddings(sections, file_id, file.filename)
 
         files_collection.insert_one(
             {
@@ -184,7 +184,7 @@ async def upload_and_stream_summary(
         add_message(session_id, f"Uploaded: {file.filename}", "")
 
         async def stream_summary():
-            yield f'data: {{"session_id": "{session_id}"}}\n\n'
+            yield f'data: {{"status": "session_id", "session_id": "{session_id}"}}\n\n'
 
             summary = ""
             async for chunk in generate_document_summary(sections, file.filename):
@@ -218,10 +218,24 @@ async def get_file_details(file_id: str):
     if not file_data:
         raise HTTPException(404, "File not found")
 
-    file_data["embeddings_count"] = embeddings_collection.count_documents(
-        {"file_id": file_id}
-    )
+    # Get section count from FAISS metadata
+    try:
+        doc_info = get_document_info(file_id)
+        file_data["embeddings_count"] = doc_info.get("total_sections", 0)
+    except:
+        file_data["embeddings_count"] = 0
+
     return {"file": file_data}
+
+
+@app.get("/search/{file_id}")
+async def search_document(file_id: str, query: str):
+    """Search within a specific document using FAISS."""
+    try:
+        result = process_query_search(query, file_id)
+        return result
+    except Exception as e:
+        raise HTTPException(500, f"Search failed: {str(e)}")
 
 
 if __name__ == "__main__":
