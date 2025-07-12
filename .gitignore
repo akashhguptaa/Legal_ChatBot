@@ -4,4 +4,4 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.pyc
-backend/Faiss_Index
+backend/Faiss_index
