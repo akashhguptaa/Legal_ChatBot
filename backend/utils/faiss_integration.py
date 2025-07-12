@@ -17,7 +17,6 @@ import PyPDF2
 import tiktoken
 from typing import List, Dict, Any
 
-# Initialize embeddings model
 embeddings_model = OpenAIEmbeddings(
     api_key=OPENAI_API_KEY, model="text-embedding-3-small"
 )
@@ -76,7 +75,6 @@ async def create_faiss_embeddings(
     with ThreadPoolExecutor(max_workers=4) as executor:
         results = list(executor.map(create_embedding_batch, batches))
 
-    # Flatten results and prepare metadata
     for batch_result in results:
         for item in batch_result:
             all_embeddings.append(item["embedding"])
@@ -104,17 +102,14 @@ async def create_faiss_embeddings(
         logger.error("No embeddings created")
         return 0
 
-    # Create FAISS index
     dimension = len(all_embeddings[0])
     index = faiss.IndexFlatIP(dimension)  # Inner product for cosine similarity
 
-    # Normalize embeddings for cosine similarity
     embeddings_array = np.array(all_embeddings).astype("float32")
     faiss.normalize_L2(embeddings_array)
 
     index.add(embeddings_array)
 
-    # Save index and metadata
     paths = get_file_paths(file_id)
     faiss.write_index(index, str(paths["index"]))
 
@@ -148,18 +143,14 @@ def search_similar_sections(
         if not file_id:
             raise ValueError("file_id is required for FAISS search")
 
-        # Load index and metadata
         index, metadata = load_faiss_index(file_id)
 
-        # Create query embedding
         query_embedding = embeddings_model.embed_query(query)
         query_vector = np.array([query_embedding]).astype("float32")
         faiss.normalize_L2(query_vector)
 
-        # Search
         scores, indices = index.search(query_vector, limit)
 
-        # Prepare results
         results = []
         for i, idx in enumerate(indices[0]):
             if idx < len(metadata):
@@ -276,7 +267,6 @@ def semantic_search(query: str, file_id: str) -> Dict[str, Any]:
 def count_tokens(text: str) -> int:
     """Count tokens in text using tiktoken."""
     if not tokenizer:
-        # Fallback: rough estimation (1 token ≈ 4 characters)
         return len(text) // 4
     return len(tokenizer.encode(text))
 
@@ -313,7 +303,6 @@ def extract_pdf_sections(pdf_path: str) -> List[Dict[str, Any]]:
 
 def _is_section_header(line: str) -> bool:
     """Check if a line might be a section header."""
-    # Common patterns for section headers
     header_patterns = [
         r"^[A-Z][A-Z\s]+$",  # ALL CAPS
         r"^\d+\.\s+[A-Z]",  # Numbered sections
@@ -328,7 +317,6 @@ def _is_section_header(line: str) -> bool:
         if re.match(pattern, line.strip()):
             return True
 
-    # Check if line is short and ends with common header indicators
     if len(line.strip()) < 100 and any(
         indicator in line for indicator in [":", ".", "§"]
     ):
@@ -388,14 +376,12 @@ def filtered_vector_search(query: str, file_id: str, filters: Dict[str, Any]) ->
     try:
         index, metadata = load_faiss_index(file_id)
         
-        # Apply filters to metadata first
         filtered_indices = []
         for i, item in enumerate(metadata):
             if apply_filters(item, filters):
                 filtered_indices.append(i)
         
         if not filtered_indices:
-            # Fallback to regular search if no matches
             return search_similar_sections(query, file_id, limit=3)
         
         # Create query embedding
@@ -403,12 +389,11 @@ def filtered_vector_search(query: str, file_id: str, filters: Dict[str, Any]) ->
         query_vector = np.array([query_embedding]).astype("float32")
         faiss.normalize_L2(query_vector)
         
-        # Search only in filtered indices
         scores, indices = index.search(query_vector, len(filtered_indices))
         
         results = []
         for i, idx in enumerate(indices[0]):
-            if idx in filtered_indices and i < 3:  # Top 3 results
+            if idx in filtered_indices and i < 3:  
                 result = metadata[idx].copy()
                 result["score"] = float(scores[0][i])
                 results.append(result)

@@ -49,7 +49,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create FAISS index directory
 FAISS_INDEX_DIR = Path("Faiss_index")
 FAISS_INDEX_DIR.mkdir(exist_ok=True)
 
