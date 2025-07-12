@@ -8,6 +8,7 @@ interface MessageInputProps {
   sendMessage: () => void;
   handleKeyPress: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
+  
   // File upload props
   onFileUpload?: () => void;
   isUploading?: boolean;

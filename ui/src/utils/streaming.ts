@@ -7,13 +7,12 @@ export async function streamSummary(
   const formData = new FormData();
   formData.append("file", file);
 
-  // Add session_id if available (can be null)
-  console.log("Streaming utility received sessionId:", sessionId); // Debug log
+  console.log("Streaming utility received sessionId:", sessionId);
   if (sessionId) {
     formData.append("session_id", sessionId);
-    console.log("Added session_id to formData:", sessionId); // Debug log
+    console.log("Added session_id to formData:", sessionId); 
   } else {
-    console.log("No session_id to add to formData"); // Debug log
+    console.log("No session_id to add to formData"); 
   }
 
   const response = await fetch("http://localhost:8000/upload/summary", {
@@ -32,7 +31,7 @@ export async function streamSummary(
     const { value, done: doneReading } = await reader.read();
     if (value) {
       const chunk = decoder.decode(value);
-      console.log("Raw chunk received:", chunk); // Debug log
+      console.log("Raw chunk received:", chunk); 
 
       const lines = chunk.split("\n");
 
@@ -40,26 +39,26 @@ export async function streamSummary(
         if (line.startsWith("data: ")) {
           try {
             const jsonStr = line.slice(6);
-            console.log("Parsing JSON:", jsonStr); // Debug log
+            console.log("Parsing JSON:", jsonStr); 
             const data = JSON.parse(jsonStr);
 
             if (data.status === "session_id" && data.session_id) {
-              console.log("Received session_id confirmation:", data.session_id); // Debug log
+              console.log("Received session_id confirmation:", data.session_id); 
               confirmedSessionId = data.session_id;
             } else if (data.status === "summary_chunk" && data.content) {
-              console.log("Sending content chunk:", data.content); // Debug log
+              console.log("Sending content chunk:", data.content); 
               onChunk(data.content);
             } else if (
               onStatus &&
               data.status !== "summary_chunk" &&
               data.status !== "session_id"
             ) {
-              console.log("Sending status:", data.status, data.message); // Debug log
+              console.log("Sending status:", data.status, data.message); 
               onStatus(data.status, data.message);
             }
           } catch (e) {
-            console.log("JSON parse error:", e); // Debug log
-            // Fallback: treat as regular content
+            console.log("JSON parse error:", e); 
+            
             onChunk(line.slice(6));
           }
         }
