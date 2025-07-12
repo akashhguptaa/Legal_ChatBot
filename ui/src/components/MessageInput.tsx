@@ -8,7 +8,7 @@ interface MessageInputProps {
   sendMessage: () => void;
   handleKeyPress: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
-  
+
   // File upload props
   onFileUpload?: () => void;
   isUploading?: boolean;
@@ -81,7 +81,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
           {onFileUpload && (
             <>
               <br />
-              You can upload PDF, DOC, DOCX, or TXT files (max 100MB). Drag & drop or click the paperclip icon.
+              You can upload PDF a Drag & drop or click the paperclip icon.
             </>
           )}
         </p>
