@@ -29,7 +29,8 @@ from utils.faiss_integration import (
     get_document_info,
     process_query_search,
 )
-from services.conversation import chat_llm, generate_session_title
+from Graph.legal_graph import chat_llm_with_graph
+from services.conversation import generate_session_title  # Keep only this
 import os
 import aiofiles
 from pathlib import Path
@@ -99,7 +100,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             response_text = ""
 
-            async for response in chat_llm(query, conversation_history, session_id):
+            async for response in chat_llm_with_graph(query, conversation_history, session_id):
                 response_text += response
                 try:
                     await websocket.send_text(response)

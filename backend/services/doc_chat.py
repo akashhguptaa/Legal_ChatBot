@@ -34,7 +34,7 @@ async def generate_document_summary(
     Document: {file_name}
     Content Preview: {content_preview}
     
-    Create a summary with the following structure using markdown:
+    Create a summary with the following structure using markdown if these things are present in the document, if not then do not include them:
     
     # 📄 Document Summary: {file_name}
     
@@ -52,7 +52,7 @@ async def generate_document_summary(
     - [List key legal terms and definitions]
     
     ## 📝 Summary
-    [2-3 paragraph overview in clear, professional language]
+    [2-3 paragraph overview in clear, professional language, and in detail]
     
     ## ⚖️ Compliance Requirements
     - [List any compliance requirements, if none say "No specific compliance requirements mentioned"]
@@ -63,9 +63,8 @@ async def generate_document_summary(
     Instructions:
     1. Format the response with proper markdown headings, bullet points, and bold text where appropriate
     2. Make it visually appealing and easy to read in a chat interface
-    3. Use proper line breaks (\\n) for readability
-    4. Ensure each section is clearly separated with line breaks
-    5. Use ### for section headers and maintain consistent formatting
+    3. Ensure each section is clearly separated with line breaks
+    4. Use ### for section headers and maintain consistent formatting
     """
 
     try:
@@ -75,7 +74,7 @@ async def generate_document_summary(
 
         async for chunk in chain.astream(summary_prompt):
             full_output += chunk
-            yield chunk  # Stream each chunk
+            yield chunk  
 
         # Background logging of token usage (non-blocking)
         async def log_tokens():

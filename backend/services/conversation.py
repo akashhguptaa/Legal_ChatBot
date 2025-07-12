@@ -1,15 +1,9 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-)
+from langchain_core.prompts import ChatPromptTemplate
 from loguru import logger
 import traceback
-from typing import (
-    Optional,
-    List,
-    Dict,   
-)
+from typing import Optional, List, Dict
 from config.config import OPENAI_API_KEY
 
 # Original LLM for backward compatibility and session title generation
@@ -29,12 +23,12 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize OpenAI client: {e}\n{traceback.format_exc()}")
 
-# Import the new graph-based chat function
-try:
-    import importlib
+# Check LangGraph availability and import
+LANGGRAPH_AVAILABLE = False
+chat_llm_with_graph = None
 
-    legal_graph_module = importlib.import_module("services.legal_graph")
-    chat_llm_with_graph = legal_graph_module.chat_llm_with_graph
+try:
+    from Graph.legal_graph import chat_llm_with_graph
     LANGGRAPH_AVAILABLE = True
     logger.info("LangGraph integration available")
 except ImportError as e:
@@ -45,7 +39,6 @@ except Exception as e:
     logger.warning(f"LangGraph not available, falling back to original chat_llm: {e}")
 
 
-# Enhanced chat function with LangGraph integration
 async def chat_llm(
     query: str,
     conversation_history: Optional[List[Dict[str, str]]] = None,
@@ -58,11 +51,9 @@ async def chat_llm(
     # Use LangGraph if available and session_id is provided
     if LANGGRAPH_AVAILABLE and session_id:
         try:
-            response_text = ""
             async for chunk in chat_llm_with_graph(
                 query, conversation_history, session_id
             ):
-                response_text += chunk
                 yield chunk
             return
         except Exception as e:
